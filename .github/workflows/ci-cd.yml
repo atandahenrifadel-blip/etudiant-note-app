@@ -73,7 +73,7 @@ jobs:
 
       # Étape 6 : lance les tests PHPUnit -> si un test échoue, le pipeline s'arrête ici
       - name: Exécution des tests PHPUnit
-        run: php artisan test --testsuite=Feature,Unit
+        run: run: ./vendor/bin/phpunit
         env:
           DB_HOST: 127.0.0.1
           DB_DATABASE: etudiant_note_test
