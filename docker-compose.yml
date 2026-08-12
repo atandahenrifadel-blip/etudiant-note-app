@@ -1,0 +1,63 @@
+# docker-compose permet de démarrer PLUSIEURS conteneurs ensemble
+# (l'appli, la base de données, le serveur web) avec UNE seule commande :
+#   docker compose up -d
+# C'est ce qui rend l'environnement de développement reproductible
+# en une commande, sur n'importe quelle machine.
+
+services:
+
+  # --- Service 1 : l'application Laravel (PHP-FPM) ---
+  app:
+    build: .              # construit l'image à partir du Dockerfile du dossier courant
+    container_name: etudiant_note_app
+    restart: unless-stopped
+    volumes:
+      - ./:/var/www/html   # synchronise le code local avec le conteneur (pratique en dev)
+    environment:
+      - DB_HOST=db
+      - DB_DATABASE=etudiant_note
+      - DB_USERNAME=laravel
+      - DB_PASSWORD=laravel_password   # en vrai projet : à mettre dans un fichier .env non commité
+    depends_on:
+      - db
+    networks:
+      - laravel_network
+
+  # --- Service 2 : le serveur web Nginx, qui sert l'application au port 8080 ---
+  webserver:
+    image: nginx:alpine
+    container_name: etudiant_note_webserver
+    restart: unless-stopped
+    ports:
+      - "8080:80"
+    volumes:
+      - ./:/var/www/html
+      - ./docker/nginx.conf:/etc/nginx/conf.d/default.conf
+    depends_on:
+      - app
+    networks:
+      - laravel_network
+
+  # --- Service 3 : la base de données MySQL ---
+  db:
+    image: mysql:8.0
+    container_name: etudiant_note_db
+    restart: unless-stopped
+    environment:
+      - MYSQL_DATABASE=etudiant_note
+      - MYSQL_USER=laravel
+      - MYSQL_PASSWORD=laravel_password
+      - MYSQL_ROOT_PASSWORD=root_password
+    volumes:
+      - db_data:/var/lib/mysql   # volume nommé : les données MySQL survivent au redémarrage du conteneur
+    networks:
+      - laravel_network
+
+# Réseau interne privé, isole nos conteneurs du reste du système (sécurité de base)
+networks:
+  laravel_network:
+    driver: bridge
+
+# Volume persistant pour ne jamais perdre les données MySQL en cas de "docker compose down"
+volumes:
+  db_data:

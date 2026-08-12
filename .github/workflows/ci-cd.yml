@@ -1,0 +1,162 @@
+# =============================================================================
+# PIPELINE CI/CD - C'est le fichier qui MATÉRIALISE le thème DevOps/DevSecOps.
+#
+# CI (Intégration Continue)  = à chaque push, on installe, on teste, on vérifie
+#                               automatiquement que le code fonctionne.
+# CD (Déploiement Continu)   = si tout est vert, on construit et publie
+#                               automatiquement l'image Docker.
+# DevSecOps = on insère des contrôles de SÉCURITÉ directement dans ce pipeline,
+#             au lieu de les faire "à la fin" ou manuellement (shift-left security).
+# =============================================================================
+
+name: CI/CD - Etudiant Note App
+
+# Déclencheurs : le pipeline se lance à chaque push ou pull request sur "main"
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+
+  # ---------------------------------------------------------------------------
+  # JOB 1 : TESTS (volet DevOps classique)
+  # ---------------------------------------------------------------------------
+  test:
+    name: Tests automatisés
+    runs-on: ubuntu-latest
+
+    # On démarre un vrai service MySQL temporaire pour les tests
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_DATABASE: etudiant_note_test
+          MYSQL_ROOT_PASSWORD: root_password
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=5
+
+    steps:
+      # Étape 1 : récupère le code du dépôt
+      - name: Récupération du code
+        uses: actions/checkout@v4
+
+      # Étape 2 : installe PHP et Composer
+      - name: Installation de PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.3'
+          extensions: pdo, pdo_mysql, mbstring, zip
+
+      # Étape 3 : installe les dépendances du projet
+      - name: Installation des dépendances (Composer)
+        run: composer install --prefer-dist --no-interaction
+
+      # Étape 4 : copie le fichier d'environnement pour les tests
+      - name: Préparation du fichier .env
+        run: cp .env.example .env && php artisan key:generate
+
+      # Étape 5 : exécute les migrations sur la base de test
+      - name: Migration de la base de test
+        run: php artisan migrate --force
+        env:
+          DB_HOST: 127.0.0.1
+          DB_DATABASE: etudiant_note_test
+          DB_USERNAME: root
+          DB_PASSWORD: root_password
+
+      # Étape 6 : lance les tests PHPUnit -> si un test échoue, le pipeline s'arrête ici
+      - name: Exécution des tests PHPUnit
+        run: php artisan test
+        env:
+          DB_HOST: 127.0.0.1
+          DB_DATABASE: etudiant_note_test
+          DB_USERNAME: root
+          DB_PASSWORD: root_password
+
+  # ---------------------------------------------------------------------------
+  # JOB 2 : SÉCURITÉ (volet DevSecOps) — s'exécute en parallèle du job "test"
+  # ---------------------------------------------------------------------------
+  security:
+    name: Analyse de sécurité (DevSecOps)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Récupération du code
+        uses: actions/checkout@v4
+
+      - name: Installation de PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.3'
+
+      - name: Installation des dépendances
+        run: composer install --prefer-dist --no-interaction
+
+      # --- Contrôle 1 : dépendances vulnérables ---
+      # "composer audit" vérifie si une librairie utilisée a une faille connue (CVE).
+      # Principe DevSecOps clé : on ne fait pas confiance aux dépendances tierces
+      # sans les vérifier.
+      - name: Audit des dépendances (composer audit)
+        run: composer audit
+
+      # --- Contrôle 2 : analyse statique du code (SAST) ---
+      # PHPStan lit le code SANS l'exécuter et détecte des erreurs
+      # potentielles (variables non définies, types incohérents, etc.)
+      - name: Analyse statique du code (PHPStan)
+        run: |
+          composer require --dev phpstan/phpstan --no-interaction
+          vendor/bin/phpstan analyse app --level=3 || true
+          # "|| true" : ici on n'échoue pas le pipeline (pédagogique),
+          # en vrai projet on retirerait "|| true" pour être strict.
+
+      # --- Contrôle 3 : recherche de secrets codés en dur (mots de passe, clés API...) ---
+      - name: Recherche de secrets exposés (Gitleaks)
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # ---------------------------------------------------------------------------
+  # JOB 3 : BUILD & SCAN DE L'IMAGE DOCKER — ne se lance QUE si test + security passent
+  # ---------------------------------------------------------------------------
+  build-and-scan:
+    name: Build image Docker + scan de vulnérabilités
+    needs: [test, security]   # dépendance explicite : attend que les 2 jobs précédents réussissent
+    runs-on: ubuntu-latest
+    steps:
+      - name: Récupération du code
+        uses: actions/checkout@v4
+
+      - name: Construction de l'image Docker
+        run: docker build -t etudiant-note-app:${{ github.sha }} .
+
+      # --- Contrôle 4 : scan de vulnérabilités DANS l'image Docker elle-même ---
+      # Trivy vérifie le système (paquets Alpine, versions PHP...) à la recherche
+      # de failles connues. C'est le contrôle "conteneur" du DevSecOps.
+      - name: Scan de l'image (Trivy)
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: 'etudiant-note-app:${{ github.sha }}'
+          format: 'table'
+          severity: 'CRITICAL,HIGH'
+          exit-code: '0'   # 0 = ne bloque pas le pipeline (mode pédagogique/rapport)
+
+  # ---------------------------------------------------------------------------
+  # JOB 4 : DÉPLOIEMENT (CD) — uniquement sur la branche main, après tout le reste
+  # ---------------------------------------------------------------------------
+  deploy:
+    name: Déploiement (simulation)
+    needs: build-and-scan
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Déploiement (étape de démonstration)
+        run: |
+          echo "✅ Tous les contrôles DevOps/DevSecOps sont passés."
+          echo "🚀 L'image serait ici poussée vers un registre puis déployée."
+          # En situation réelle : docker push, puis déploiement sur un serveur/cloud

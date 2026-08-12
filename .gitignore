@@ -1,0 +1,17 @@
+# Dépendances (réinstallables via composer install / npm install)
+/vendor
+/node_modules
+
+# Fichiers de config locale — NE JAMAIS versionner de secrets (règle DevSecOps)
+.env
+.env.backup
+
+# Fichiers générés par Laravel
+/storage/*.key
+/public/hot
+/public/storage
+.phpunit.result.cache
+
+# Fichiers système
+.DS_Store
+Thumbs.db
